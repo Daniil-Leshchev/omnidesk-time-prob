@@ -15,12 +15,15 @@
  *
  * В консоли: __timeprobe.report(), __timeprobe.scan(), __timeprobe.probeOutbound(), __timeprobe.copy().
  * Пороги короткие специально для прогона. Боевые значения — в файле проверки, не здесь.
+ *
+ * Кнопка закрытия обращения пишет case_close. Если страница сразу открывает другое
+ * обращение, метка сохраняется в sessionStorage и попадает в журнал уже новой страницы.
  */
 (function () {
   'use strict';
 
   if (window.__timeprobe && window.__timeprobe.active) {
-    try { console.log('[timeprobe] уже запущен, tab ' + window.__timeprobe.state.tabId); } catch (e) { /* ничего */ }
+    try { console.warn('[timeprobe] уже запущен. Чтобы подхватить новую версию с case_close, обновите страницу.'); } catch (e) { /* ничего */ }
     return;
   }
 
@@ -106,7 +109,9 @@
     closedFor: null,
     heartbeatTimer: null,
     pollTimer: null,
-    idleTimer: null
+    idleTimer: null,
+    previousPage: null,
+    caseClosed: false
   };
 
   function snapshot() {
@@ -141,9 +146,121 @@
     }
     state.events.push(row);
     while (state.events.length > LOG_LIMIT) state.events.shift();
+    if (name === 'case_close' && row.reason !== 'carried') state.caseClosed = true;
     try { console.log('[timeprobe]', row.ts, name, row); } catch (e) { /* ничего */ }
     safe(renderPanel, 'renderPanel');
     return row;
+  }
+
+  function saveCloseMark() {
+    var marks = [];
+    var i;
+    for (i = 0; i < state.events.length; i++) {
+      if (state.events[i].event === 'case_close' && state.events[i].reason !== 'carried') marks.push(state.events[i]);
+    }
+    if (!marks.length) return;
+    try {
+      sessionStorage.setItem('timeprobe.carry', JSON.stringify({
+        tab_id: state.tabId,
+        href: location.pathname,
+        case_id: state.lastCaseId,
+        events: marks.slice(-5)
+      }));
+    } catch (e) { /* ничего */ }
+  }
+
+  function loadCarry() {
+    var raw = null;
+    try { raw = sessionStorage.getItem('timeprobe.carry'); } catch (e) { return; }
+    if (!raw) return;
+    try { sessionStorage.removeItem('timeprobe.carry'); } catch (e) { /* ничего */ }
+    var saved = null;
+    try { saved = JSON.parse(raw); } catch (e) { return; }
+    if (!saved || saved.tab_id !== state.tabId || !saved.events) return;
+    state.previousPage = saved;
+  }
+
+  function replayCarry() {
+    var saved = state.previousPage;
+    if (!saved || !saved.events) return;
+    saved.events.forEach(function (ev) {
+      if (!ev || ev.event !== 'case_close') return;
+      emit('case_close', {
+        reason: 'carried',
+        case_id: ev.case_id,
+        case_number: ev.case_number,
+        closed_at: ev.iso,
+        control: ev.control,
+        from_href: saved.href
+      });
+    });
+  }
+
+  function looksLikeClose(text) {
+    return /закры|close|resolve|заверш/i.test(text || '');
+  }
+
+  function uiLabel(node) {
+    var bits = [];
+    try {
+      if (node.getAttribute) {
+        bits.push(node.getAttribute('aria-label') || '');
+        bits.push(node.getAttribute('title') || '');
+      }
+    } catch (e) { /* ничего */ }
+    bits.push(node.innerText || node.textContent || node.value || '');
+    return clip(bits.join(' '), 80);
+  }
+
+  function clickControl(node) {
+    var n = node;
+    var i;
+    for (i = 0; n && i < 6; i++) {
+      try { if (n.closest && n.closest('#timeprobe-box')) return null; } catch (e) { /* ничего */ }
+      if (n.id === 'timeprobe-box') return null;
+      var tag = (n.tagName || '').toLowerCase();
+      var role = '';
+      try { role = (n.getAttribute && n.getAttribute('role')) || ''; } catch (e) { role = ''; }
+      if (tag === 'button' || tag === 'a' || tag === 'option' || role === 'button' || role === 'menuitem' || role === 'option') return n;
+      n = n.parentElement;
+    }
+    return null;
+  }
+
+  function onCloseClick(ev) {
+    var node = clickControl(ev.target);
+    if (!node) return;
+    var text = uiLabel(node);
+    var blob = [node.id || '', node.name || '', typeof node.className === 'string' ? node.className : '', text].join(' ');
+    if (!looksLikeClose(blob)) return;
+    emit('case_close', {
+      reason: 'ui',
+      control: {
+        tag: (node.tagName || '').toLowerCase(),
+        id: node.id || '',
+        name: node.name || '',
+        text: text
+      }
+    });
+    saveCloseMark();
+  }
+
+  function onCloseChange(ev) {
+    var node = ev.target;
+    if (!node || (node.tagName || '').toLowerCase() !== 'select') return;
+    var text = '';
+    try {
+      if (node.options && node.selectedIndex >= 0 && node.options[node.selectedIndex]) {
+        text = clip(node.options[node.selectedIndex].textContent, 80);
+      }
+    } catch (e) { return; }
+    var blob = [node.id || '', node.name || '', text].join(' ');
+    if (!looksLikeClose(blob)) return;
+    emit('case_close', {
+      reason: 'status',
+      control: { tag: 'select', id: node.id || '', name: node.name || '', text: text }
+    });
+    saveCloseMark();
   }
 
   function markInput() {
@@ -267,6 +384,7 @@
       tab_id: state.tabId,
       started_at: state.startedAt,
       href: location.pathname,
+      previous_page: state.previousPage,
       globals_present: (function () {
         var g = readGlobals();
         return {
@@ -305,6 +423,7 @@
     var line = document.getElementById('timeprobe-line');
     if (line) {
       line.textContent = state.events.length + ' событий'
+        + (state.caseClosed ? ' · case_close' : '')
         + (last ? ' · последнее ' + last.ts + ' ' + last.event : '')
         + ' · ' + state.activity
         + (snapshot().focused ? ' · focus' : ' · blur')
@@ -352,6 +471,8 @@
     });
     window.addEventListener('focus', function () { safe(function () { emit('focus'); }, 'focus'); });
     window.addEventListener('blur', function () { safe(function () { emit('blur'); }, 'blur'); });
+    document.addEventListener('click', function (ev) { safe(function () { onCloseClick(ev); }, 'close click'); }, true);
+    document.addEventListener('change', function (ev) { safe(function () { onCloseChange(ev); }, 'close change'); }, true);
     window.addEventListener('pagehide', function () { safe(function () { onPageGone('pagehide'); }, 'pagehide'); });
     window.addEventListener('beforeunload', function () { safe(function () { onPageGone('beforeunload'); }, 'beforeunload'); });
 
@@ -359,8 +480,10 @@
     state.heartbeatTimer = setInterval(function () { safe(function () { emit('heartbeat'); }, 'heartbeat'); }, HEARTBEAT_MS);
     state.pollTimer = setInterval(function () { safe(function () { onCase('poll'); }, 'poll'); }, POLL_MS);
 
+    loadCarry();
     emit('probe_start', { idle_ms: IDLE_MS, heartbeat_ms: HEARTBEAT_MS });
     onCase('init');
+    replayCarry();
   }
 
   window.__timeprobe = {
