@@ -1,0 +1,478 @@
+{
+  "generated_at": "2026-09-29T12:59:11.781Z",
+  "thresholds": {
+    "idle_ms": 45000,
+    "heartbeat_ms": 15000,
+    "note": "короткие пороги прогона, не боевые"
+  },
+  "tab_id": "8k08b7-mumm3y73",
+  "started_at": "2026-09-29T12:59:01.236Z",
+  "href": "/staff/cases/record/803-267443/",
+  "globals_present": {
+    "CurrentCaseId": true,
+    "CurrentStaffId": true,
+    "CurrentUserId": true,
+    "CurrentClientId": true
+  },
+  "events": [
+    {
+      "case_id": "422438128",
+      "case_id_source": "CurrentCaseId",
+      "case_number": "803-267443",
+      "staff_id_present": true,
+      "user_id_present": true,
+      "client_id_present": true,
+      "tab_id": "8k08b7-mumm3y73",
+      "visibility": "visible",
+      "focused": false,
+      "activity": "active",
+      "ms_since_input": 956,
+      "event": "probe_start",
+      "ts": "17:59:02",
+      "iso": "2026-09-29T12:59:02.193Z",
+      "idle_ms": 45000,
+      "heartbeat_ms": 15000
+    },
+    {
+      "case_id": "422438128",
+      "case_id_source": "CurrentCaseId",
+      "case_number": "803-267443",
+      "staff_id_present": true,
+      "user_id_present": true,
+      "client_id_present": true,
+      "tab_id": "8k08b7-mumm3y73",
+      "visibility": "visible",
+      "focused": false,
+      "activity": "active",
+      "ms_since_input": 959,
+      "event": "ticket_open",
+      "ts": "17:59:02",
+      "iso": "2026-09-29T12:59:02.196Z",
+      "reason": "init"
+    },
+    {
+      "case_id": "422438128",
+      "case_id_source": "CurrentCaseId",
+      "case_number": "803-267443",
+      "staff_id_present": true,
+      "user_id_present": true,
+      "client_id_present": true,
+      "tab_id": "8k08b7-mumm3y73",
+      "visibility": "visible",
+      "focused": false,
+      "activity": "active",
+      "ms_since_input": 961,
+      "event": "field_scan",
+      "ts": "17:59:02",
+      "iso": "2026-09-29T12:59:02.198Z",
+      "fields": {
+        "controls": [
+          {
+            "tag": "select",
+            "type": "select-one",
+            "id": "note_staff_id",
+            "name": "",
+            "label": "",
+            "value": "видна всем сотрудникам"
+          },
+          {
+            "tag": "input",
+            "type": "submit",
+            "id": "note_button",
+            "name": "",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "text",
+            "id": "searchLinked",
+            "name": "",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "submit",
+            "id": "connect_button",
+            "name": "",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "text",
+            "id": "case_search_string",
+            "name": "",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "submit",
+            "id": "",
+            "name": "",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "submit",
+            "id": "select_case_button",
+            "name": "",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "submit",
+            "id": "select_main_case_button",
+            "name": "",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "checkbox",
+            "id": "b_notify_user_main_case",
+            "name": "",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "checkbox",
+            "id": "b_notify_user_merge_case",
+            "name": "",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "submit",
+            "id": "merge_cases_button",
+            "name": "",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "text",
+            "id": "",
+            "name": "other_min",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "text",
+            "id": "",
+            "name": "other_hour",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "text",
+            "id": "",
+            "name": "other_day",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "text",
+            "id": "",
+            "name": "other_week",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "text",
+            "id": "",
+            "name": "other_month",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "checkbox",
+            "id": "",
+            "name": "",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "text",
+            "id": "",
+            "name": "other_min",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "text",
+            "id": "",
+            "name": "other_hour",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "text",
+            "id": "",
+            "name": "other_day",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "text",
+            "id": "",
+            "name": "other_week",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "text",
+            "id": "",
+            "name": "other_month",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "text",
+            "id": "",
+            "name": "other_min",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "text",
+            "id": "",
+            "name": "other_hour",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "text",
+            "id": "",
+            "name": "other_day",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "text",
+            "id": "",
+            "name": "other_week",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "text",
+            "id": "",
+            "name": "other_month",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "text",
+            "id": "fast_template_name",
+            "name": "fast_template_name",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "text",
+            "id": "support_request_email",
+            "name": "support_request_email",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "text",
+            "id": "",
+            "name": "support_request_subject",
+            "label": "",
+            "value": ""
+          },
+          {
+            "tag": "input",
+            "type": "submit",
+            "id": "case_help_button",
+            "name": "",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "checkbox",
+            "id": "",
+            "name": "inherit_parent_fields",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "checkbox",
+            "id": "",
+            "name": "fields[new_case_sender]",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "checkbox",
+            "id": "",
+            "name": "fields[12]",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "checkbox",
+            "id": "",
+            "name": "fields[13]",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "checkbox",
+            "id": "",
+            "name": "fields[14]",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "checkbox",
+            "id": "",
+            "name": "fields[15]",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "submit",
+            "id": "",
+            "name": "",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "checkbox",
+            "id": "",
+            "name": "inherit_parent_fields",
+            "label": "",
+            "value": "[skipped]"
+          },
+          {
+            "tag": "input",
+            "type": "checkbox",
+            "id": "",
+            "name": "fields[new_case_sender]",
+            "label": "",
+            "value": "[skipped]"
+          }
+        ],
+        "hinted": [
+          {
+            "tag": "select",
+            "id": "case_group_id",
+            "name": "case_group_id",
+            "className": "select-box select-for-nano"
+          },
+          {
+            "tag": "input",
+            "id": "new_case_subject",
+            "name": "new_case_subject",
+            "className": ""
+          },
+          {
+            "tag": "div",
+            "id": "current_subject",
+            "name": "",
+            "className": "record-case-title"
+          },
+          {
+            "tag": "input",
+            "id": "case_record_subject",
+            "name": "",
+            "className": "form-it case-record-subject"
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "422438128",
+      "case_id_source": "CurrentCaseId",
+      "case_number": "803-267443",
+      "staff_id_present": true,
+      "user_id_present": true,
+      "client_id_present": true,
+      "tab_id": "8k08b7-mumm3y73",
+      "visibility": "visible",
+      "focused": false,
+      "activity": "active",
+      "ms_since_input": 2295,
+      "event": "outbound",
+      "ts": "17:59:03",
+      "iso": "2026-09-29T12:59:03.532Z",
+      "result": "ok",
+      "status": 200,
+      "ms": 1962,
+      "note": "публичный хост, не будущий приёмник"
+    },
+    {
+      "case_id": "422438128",
+      "case_id_source": "CurrentCaseId",
+      "case_number": "803-267443",
+      "staff_id_present": true,
+      "user_id_present": true,
+      "client_id_present": true,
+      "tab_id": "8k08b7-mumm3y73",
+      "visibility": "visible",
+      "focused": false,
+      "activity": "active",
+      "ms_since_input": 2295,
+      "event": "outbound",
+      "ts": "17:59:03",
+      "iso": "2026-09-29T12:59:03.532Z",
+      "result": "ok",
+      "status": 200,
+      "ms": 1958,
+      "note": "публичный хост, не будущий приёмник"
+    },
+    {
+      "case_id": "422438128",
+      "case_id_source": "CurrentCaseId",
+      "case_number": "803-267443",
+      "staff_id_present": true,
+      "user_id_present": true,
+      "client_id_present": true,
+      "tab_id": "8k08b7-mumm3y73",
+      "visibility": "visible",
+      "focused": true,
+      "activity": "active",
+      "ms_since_input": 2,
+      "event": "focus",
+      "ts": "17:59:11",
+      "iso": "2026-09-29T12:59:11.724Z"
+    }
+  ]
+}
+
+CurrentStaffID: 71058
