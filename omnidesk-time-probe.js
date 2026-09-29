@@ -433,7 +433,7 @@
 
   function mountPanel() {
     if (document.getElementById('timeprobe-box')) return;
-    var css = '#timeprobe-box{position:fixed;right:12px;bottom:12px;z-index:2147483000;background:#fff;color:#222;border:1px solid #ccc;border-radius:6px;padding:8px 10px;font:12px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;width:280px}#timeprobe-box button{font:inherit;margin-right:6px;margin-top:6px}';
+    var css = '#timeprobe-box{position:fixed;right:16px;top:120px;z-index:2147483000;background:#fff;color:#222;border:1px solid #ccc;border-radius:6px;padding:8px 10px;font:12px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;width:280px}#timeprobe-box button{font:inherit;margin-right:6px;margin-top:6px}';
     var style = document.createElement('style');
     style.id = 'timeprobe-style';
     style.appendChild(document.createTextNode(css));
