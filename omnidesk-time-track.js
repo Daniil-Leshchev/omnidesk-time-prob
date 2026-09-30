@@ -1,0 +1,650 @@
+/*
+ * Наружу уходят только именованные события. Сырые focus / blur / visible
+ * остаются внутри и в имена не превращаются по одному:
+ *   hidden              → omnidesk_case_tab_leave / omnidesk_case_tab_return
+ *                         (смена вкладки и сворачивание окна — одно и то же)
+ *   blur при видимой
+ *   вкладке             → omnidesk_case_app_leave / omnidesk_case_app_return
+ *   нет ввода           → omnidesk_case_idle / omnidesk_case_active
+ *   открытие            → omnidesk_case_open
+ *   завершить чат      → модалка статуса. «в ожидании» и «закрытое»
+ *                         плюс кнопка «Завершить» → omnidesk_case_close.
+ *                         «открытое» и «Отменить» работу не заканчивают.
+ *                         Без модалки клик «закрыть» по-прежнему сразу закрывает.
+ *   крестик вкладки     → omnidesk_case_tab_close
+ *
+ * В каждом событии число staff_id, case_id, case_number, tab_id, event_ts.
+ * Если на странице есть select#priority-select и select#case_group_id, в событие
+ * попадают только подписи выбранных пунктов. Адрес, получатель и имя сотрудника не читаются.
+ * Категория и тема — только у поля с такой подписью. На тестовой странице их нет.
+ *
+ */
+(function () {
+  'use strict';
+
+  if (window.__timetrack && window.__timetrack.active) {
+    try { console.warn('[timetrack] уже запущен. Обновите страницу, чтобы подхватить новый файл.'); } catch (e) { }
+    return;
+  }
+
+  var SEND_URL = '';
+  var IDLE_MS = 2 * 60 * 1000;
+  var POLL_MS = 1000;
+  var LOG_LIMIT = 200;
+  var CASE_URL_RE = /\/cases\/record\/(\d+-\d+)/;
+  var LAST_KEY = 'timetrack.lastCase';
+  var CLOSE_KEY = 'timetrack.pendingClose';
+  var TAB_CLOSE_KEY = 'timetrack.pendingTabClose';
+
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+
+  function hhmmss(d) {
+    d = d || new Date();
+    return pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+  }
+
+  function safe(fn, label) {
+    try { return fn(); } catch (e) {
+      try { console.warn('[timetrack] ошибка в ' + label + ':', e); } catch (_) { }
+      return undefined;
+    }
+  }
+
+  function rid() {
+    return Math.random().toString(36).slice(2, 8) + '-' + Date.now().toString(36);
+  }
+
+  function readStore(key) {
+    try {
+      var raw = sessionStorage.getItem(key);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function writeStore(key, value) {
+    try {
+      if (value === null) sessionStorage.removeItem(key);
+      else sessionStorage.setItem(key, JSON.stringify(value));
+    } catch (e) { }
+  }
+
+  function readGlobals() {
+    var g = {};
+    try { g.CurrentCaseId = CurrentCaseId; } catch (e) { g.CurrentCaseId = undefined; }
+    try { g.CurrentStaffId = CurrentStaffId; } catch (e) { g.CurrentStaffId = undefined; }
+    return g;
+  }
+
+  function present(v) {
+    return !(v === undefined || v === null || String(v) === '' || String(v) === '0');
+  }
+
+  function getCaseInfo() {
+    var g = readGlobals();
+    var number = null;
+    try {
+      var m = CASE_URL_RE.exec(location.pathname + location.hash);
+      if (m) number = m[1];
+    } catch (e) { }
+    if (present(g.CurrentCaseId)) return { id: String(g.CurrentCaseId), source: 'CurrentCaseId', number: number };
+    if (number) return { id: number, source: 'URL', number: number };
+    return { id: null, source: null, number: number };
+  }
+
+  function staffId() {
+    var g = readGlobals();
+    return present(g.CurrentStaffId) ? String(g.CurrentStaffId) : null;
+  }
+
+  function tabId() {
+    try {
+      var id = sessionStorage.getItem('timetrack.tabId');
+      if (!id) {
+        id = rid();
+        sessionStorage.setItem('timetrack.tabId', id);
+      }
+      return id;
+    } catch (e) {
+      return 'no-storage';
+    }
+  }
+
+  var state = {
+    tabId: tabId(),
+    startedAt: new Date().toISOString(),
+    events: [],
+    lastInput: Date.now(),
+    activity: 'active',
+    away: null,
+    lastCaseId: null,
+    tabCloseQueued: false,
+    caseClosedId: null,
+    closedByButton: null,
+    chosenStatus: null
+  };
+
+  function flags() {
+    var focused = false;
+    var visibility = 'unknown';
+    try { focused = document.hasFocus(); } catch (e) { }
+    try { visibility = document.visibilityState || 'unknown'; } catch (e) { }
+    return { visibility: visibility, focused: focused, activity: state.activity };
+  }
+
+  function selectedText(select) {
+    if (!select || !select.options || select.selectedIndex < 0) return null;
+    var text = String(select.options[select.selectedIndex].textContent || '').replace(/\s+/g, ' ').trim();
+    if (!text || text === 'не назначен') return null;
+    return text.slice(0, 80);
+  }
+
+  function labelTitle(label) {
+    var span = label.querySelector('span.lbl');
+    var raw = span ? (span.childNodes[0] && span.childNodes[0].textContent) || span.textContent : '';
+    return String(raw || '').replace(/\s+/g, ' ').trim();
+  }
+
+  /* Приоритет на тестовой странице — select#priority-select, список скрыт, выбранный option на месте.
+     Категорию и тему читаем только если подпись поля так и называется. Адрес, получателя и имя не берём. */
+  function readMarkup() {
+    var priority = selectedText(document.querySelector('#priority-select, select[name="case_priority"]'));
+    var group = selectedText(document.querySelector('#case_group_id'));
+    var category = null;
+    var topic = null;
+    var labels = document.querySelectorAll('label.rlt.select-lbl');
+    var i;
+    for (i = 0; i < labels.length; i++) {
+      var title = labelTitle(labels[i]);
+      var value = selectedText(labels[i].querySelector('select'));
+      if (!priority && /^Приоритет\b/.test(title)) priority = value;
+      if (!group && /^Группа\b/.test(title)) group = value;
+      if (/^Категория\b/.test(title)) category = value;
+      if (/^Тема\b/.test(title)) topic = value;
+    }
+    return { priority: priority, group: group, category: category, topic: topic };
+  }
+
+  function payload(eventName, extra) {
+    var info = getCaseInfo();
+    var f = flags();
+    var markup = readMarkup();
+    var row = {
+      event: eventName,
+      event_ts: new Date().toISOString(),
+      ts: hhmmss(),
+      case_id: info.id,
+      case_number: info.number,
+      staff_id: staffId(),
+      tab_id: state.tabId,
+      visibility: f.visibility,
+      focused: f.focused,
+      activity: f.activity,
+      priority: markup.priority,
+      group: markup.group,
+      category: markup.category,
+      topic: markup.topic
+    };
+    if (extra) {
+      Object.keys(extra).forEach(function (k) { row[k] = extra[k]; });
+    }
+    return row;
+  }
+
+  function remember(row) {
+    state.events.push(row);
+    while (state.events.length > LOG_LIMIT) state.events.shift();
+    try { console.log('[timetrack]', row.ts, row.event, row); } catch (e) { }
+    safe(renderPanel, 'renderPanel');
+  }
+
+  function dispatch(row) {
+    remember(row);
+    if (!SEND_URL || typeof fetch !== 'function') return;
+    try {
+      fetch(SEND_URL, {
+        method: 'POST',
+        mode: 'cors',
+        cache: 'no-store',
+        credentials: 'omit',
+        keepalive: true,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(row)
+      }).catch(function () { /* сеть не должна ломать страницу */ });
+    } catch (e) { }
+  }
+
+  function track(eventName, extra) {
+    dispatch(payload(eventName, extra));
+  }
+
+  function saveLastCase(info) {
+    info = info || getCaseInfo();
+    if (!info.id) return;
+    writeStore(LAST_KEY, {
+      tab_id: state.tabId,
+      case_id: info.id,
+      case_number: info.number
+    });
+    state.lastCaseId = info.id;
+  }
+
+  function sameTab(saved) {
+    return !!(saved && saved.tab_id === state.tabId && saved.case_id);
+  }
+
+  /* Обновление той же страницы не начинает новую сессию.
+     Другой case_id — закрытие старого обращения и открытие нового. */
+  function openFromStorage() {
+    var info = getCaseInfo();
+    var saved = readStore(LAST_KEY);
+    if (!info.id) return;
+    if (sameTab(saved) && saved.case_id === info.id) {
+      state.lastCaseId = info.id;
+      return;
+    }
+    if (sameTab(saved) && saved.case_id !== info.id) {
+      if (state.closedByButton !== saved.case_id) {
+        track('omnidesk_case_close', {
+          reason: 'switch',
+          case_id: saved.case_id,
+          case_number: saved.case_number,
+          next_case_id: info.id
+        });
+      }
+      track('omnidesk_case_open', { reason: 'switch', previous_case_id: saved.case_id });
+    } else {
+      track('omnidesk_case_open', { reason: 'first' });
+    }
+    saveLastCase(info);
+  }
+
+  function onCasePoll() {
+    var info = getCaseInfo();
+    var next = info.id;
+    var prev = state.lastCaseId;
+    if (String(next) === String(prev)) return;
+    if (prev) {
+      var saved = readStore(LAST_KEY);
+      track('omnidesk_case_close', {
+        reason: 'switch',
+        case_id: prev,
+        case_number: saved && saved.case_id === prev ? saved.case_number : null,
+        next_case_id: next
+      });
+    }
+    state.lastCaseId = next;
+    state.caseClosedId = null;
+    if (next) {
+      track('omnidesk_case_open', { reason: 'switch', previous_case_id: prev });
+      saveLastCase(info);
+    }
+  }
+
+  function onHidden() {
+    if (state.away === 'tab') return;
+    state.away = 'tab';
+    track('omnidesk_case_tab_leave');
+  }
+
+  function onVisible() {
+    if (state.away !== 'tab') return;
+    state.away = null;
+    track('omnidesk_case_tab_return');
+  }
+
+  function onBlur() {
+    var visibility = 'unknown';
+    try { visibility = document.visibilityState; } catch (e) { }
+    if (visibility !== 'visible' || state.away === 'tab' || state.away === 'app') return;
+    state.away = 'app';
+    track('omnidesk_case_app_leave');
+  }
+
+  function onFocus() {
+    if (state.away !== 'app') return;
+    var visibility = 'unknown';
+    try { visibility = document.visibilityState; } catch (e) { }
+    if (visibility !== 'visible') return;
+    state.away = null;
+    track('omnidesk_case_app_return');
+  }
+
+  function markInput() {
+    state.lastInput = Date.now();
+    if (state.activity !== 'active') {
+      state.activity = 'active';
+      track('omnidesk_case_active');
+    }
+  }
+
+  function checkIdle() {
+    if (state.away) return;
+    if (state.activity === 'active' && Date.now() - state.lastInput >= IDLE_MS) {
+      state.activity = 'idle';
+      track('omnidesk_case_idle');
+    }
+  }
+
+  function looksLikeClose(text) {
+    return /закры|close|resolve|заверш/i.test(text || '');
+  }
+
+  function isFinishChat(text) {
+    return /завершить\s*чат/i.test(text || '');
+  }
+
+  function isConfirmFinish(text) {
+    return /завершить/i.test(text || '') && !/чат/i.test(text || '');
+  }
+
+  function isCancel(text) {
+    return /отмен/i.test(text || '');
+  }
+
+  function statusKind(text) {
+    text = text || '';
+    if (/ожидани/i.test(text)) return 'waiting';
+    if (/закрыт/i.test(text)) return 'closed';
+    if (/открыт/i.test(text)) return 'open';
+    return null;
+  }
+
+  function statusDialog() {
+    var nodes = document.querySelectorAll('div, section, form, [role="dialog"]');
+    var best = null;
+    var bestLen = 2000;
+    var i;
+    for (i = 0; i < nodes.length && i < 3000; i++) {
+      var t = nodes[i].innerText || '';
+      if (t.length < 40 || t.length > 1200) continue;
+      if (t.indexOf('Выберите статус') < 0) continue;
+      if (t.length < bestLen) {
+        best = nodes[i];
+        bestLen = t.length;
+      }
+    }
+    return best;
+  }
+
+  function buttonLooksOn(node) {
+    var pressed = '';
+    try { pressed = node.getAttribute('aria-pressed') || node.getAttribute('aria-selected') || ''; } catch (e) { }
+    if (pressed === 'true') return true;
+    var cls = typeof node.className === 'string' ? node.className : '';
+    return /active|selected|current|pressed|checked|btn-on|is-on/i.test(cls);
+  }
+
+  function chosenInDialog(dialog) {
+    if (!dialog) return state.chosenStatus;
+    var buttons = dialog.querySelectorAll('button, [role="button"], a, input[type="button"]');
+    var statuses = [];
+    var i;
+    for (i = 0; i < buttons.length; i++) {
+      var kind = statusKind(uiLabel(buttons[i]));
+      if (!kind) continue;
+      statuses.push({ node: buttons[i], kind: kind });
+      if (buttonLooksOn(buttons[i])) return kind;
+    }
+    if (statuses.length >= 2) {
+      var colors = [];
+      for (i = 0; i < statuses.length; i++) {
+        try { colors.push(window.getComputedStyle(statuses[i].node).backgroundColor || ''); }
+        catch (e) { colors.push(''); }
+      }
+      for (i = 0; i < statuses.length; i++) {
+        var n = 0;
+        var j;
+        for (j = 0; j < colors.length; j++) if (colors[j] && colors[j] === colors[i]) n++;
+        if (colors[i] && n === 1) return statuses[i].kind;
+      }
+    }
+    return state.chosenStatus;
+  }
+
+  function uiLabel(node) {
+    var bits = [];
+    try {
+      if (node.getAttribute) {
+        bits.push(node.getAttribute('aria-label') || '');
+        bits.push(node.getAttribute('title') || '');
+      }
+    } catch (e) { }
+    var text = node.innerText || node.textContent || node.value || '';
+    bits.push(String(text).replace(/\s+/g, ' ').trim().slice(0, 80));
+    return bits.join(' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+  }
+
+  function clickControl(node) {
+    var n = node;
+    var i;
+    var labeled = null;
+    for (i = 0; n && i < 8; i++) {
+      try { if (n.closest && n.closest('#timetrack-box')) return null; } catch (e) { }
+      if (n.id === 'timetrack-box') return null;
+      var tag = (n.tagName || '').toLowerCase();
+      var role = '';
+      var text = uiLabel(n);
+      try { role = (n.getAttribute && n.getAttribute('role')) || ''; } catch (e) { role = ''; }
+      if (!labeled && (isFinishChat(text) || isConfirmFinish(text) || isCancel(text) || statusKind(text))) labeled = n;
+      if (tag === 'button' || tag === 'a' || tag === 'option' || role === 'button' || role === 'menuitem' || role === 'option') return n;
+      n = n.parentElement;
+    }
+    return labeled;
+  }
+
+  /* Метка пишется сразу. Если страница осталась — уходит отсюда.
+     Если открылось другое обращение — уходит уже со следующей загрузки, один раз. */
+  function queueCaseClose(reason, control) {
+    var info = getCaseInfo();
+    if (!info.id || state.caseClosedId === info.id) return;
+    var mark = payload('omnidesk_case_close', {
+      reason: reason,
+      mark_id: rid(),
+      control: control
+    });
+    writeStore(CLOSE_KEY, mark);
+    state.caseClosedId = info.id;
+    setTimeout(function () {
+      safe(function () {
+        var pending = readStore(CLOSE_KEY);
+        var now = getCaseInfo();
+        if (!pending || !now.id || pending.case_id !== now.id) return;
+        writeStore(CLOSE_KEY, null);
+        dispatch(pending);
+      }, 'close stay');
+    }, 400);
+  }
+
+  function flushQueuedClose() {
+    var pending = readStore(CLOSE_KEY);
+    if (!pending) return;
+    var now = getCaseInfo();
+    if (now.id && pending.case_id === now.id) return;
+    writeStore(CLOSE_KEY, null);
+    state.closedByButton = pending.case_id;
+    pending.reason = pending.reason || 'carried';
+    dispatch(pending);
+  }
+
+  function closeControl(node, text) {
+    return {
+      tag: (node.tagName || '').toLowerCase(),
+      id: node.id || '',
+      text: text
+    };
+  }
+
+  function onCloseClick(ev) {
+    var node = clickControl(ev.target);
+    if (!node) return;
+    var text = uiLabel(node);
+    var kind = statusKind(text);
+    var dialog = statusDialog();
+
+    if (isFinishChat(text)) {
+      state.chosenStatus = null;
+      return;
+    }
+    if (isCancel(text)) {
+      state.chosenStatus = null;
+      return;
+    }
+    if (kind && dialog) {
+      state.chosenStatus = kind;
+      return;
+    }
+    if (isConfirmFinish(text) && dialog) {
+      var picked = chosenInDialog(dialog);
+      var label = picked === 'waiting' ? 'в ожидании' : picked === 'closed' ? 'закрытое' : text;
+      state.chosenStatus = null;
+      if (picked === 'open') return;
+      queueCaseClose(picked || 'status', closeControl(node, label));
+      return;
+    }
+    if (dialog) return;
+    var blob = [node.id || '', node.name || '', typeof node.className === 'string' ? node.className : '', text].join(' ');
+    if (kind === 'open' || !looksLikeClose(blob)) return;
+    queueCaseClose(kind === 'waiting' ? 'waiting' : 'ui', closeControl(node, text));
+  }
+
+  function onCloseChange(ev) {
+    var node = ev.target;
+    if (!node || (node.tagName || '').toLowerCase() !== 'select') return;
+    var text = '';
+    try {
+      if (node.options && node.selectedIndex >= 0 && node.options[node.selectedIndex]) {
+        text = String(node.options[node.selectedIndex].textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+      }
+    } catch (e) { return; }
+    var kind = statusKind(text);
+    if (kind === 'open') return;
+    var blob = [node.id || '', node.name || '', text].join(' ');
+    if (kind !== 'waiting' && kind !== 'closed' && !looksLikeClose(blob)) return;
+    queueCaseClose(kind || 'status', { tag: 'select', id: node.id || '', text: text });
+  }
+
+  /* pagehide бывает и при переходе, и при крестике.
+     Событие уходит сразу. Следующая загрузка той же вкладки его отменяет. */
+  function onPageHide() {
+    saveLastCase();
+    if (state.tabCloseQueued) return;
+    var info = getCaseInfo();
+    if (!info.id) return;
+    state.tabCloseQueued = true;
+    var row = payload('omnidesk_case_tab_close', { reason: 'pagehide', mark_id: rid() });
+    writeStore(TAB_CLOSE_KEY, row);
+    dispatch(row);
+  }
+
+  function voidTabCloseIfReturned() {
+    var pending = readStore(TAB_CLOSE_KEY);
+    if (!pending || pending.tab_id !== state.tabId) return;
+    writeStore(TAB_CLOSE_KEY, null);
+    track('omnidesk_case_tab_close', {
+      reason: 'void',
+      mark_id: rid(),
+      void_mark_id: pending.mark_id,
+      case_id: pending.case_id,
+      case_number: pending.case_number,
+      event_ts: pending.event_ts
+    });
+  }
+
+  function report() {
+    return {
+      generated_at: new Date().toISOString(),
+      send_url: SEND_URL || null,
+      idle_ms: IDLE_MS,
+      tab_id: state.tabId,
+      started_at: state.startedAt,
+      href: location.pathname,
+      events: state.events
+    };
+  }
+
+  function copyReport() {
+    var text = JSON.stringify(report(), null, 2);
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).catch(function () { console.log(text); });
+        return text;
+      }
+    } catch (e) { }
+    console.log(text);
+    return text;
+  }
+
+  function renderPanel() {
+    var line = document.getElementById('timetrack-line');
+    if (!line) return;
+    var last = state.events[state.events.length - 1];
+    line.textContent = state.events.length + ' событий'
+      + (last ? ' · ' + last.ts + ' ' + last.event : '')
+      + (SEND_URL ? '' : ' · без отправки');
+  }
+
+  function mountPanel() {
+    if (document.getElementById('timetrack-box')) return;
+    var css = '#timetrack-box{position:fixed;right:16px;top:120px;z-index:2147483000;background:#fff;color:#222;border:1px solid #ccc;border-radius:6px;padding:8px 10px;font:12px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;width:280px}#timetrack-box button{font:inherit;margin-top:6px}';
+    var style = document.createElement('style');
+    style.id = 'timetrack-style';
+    style.appendChild(document.createTextNode(css));
+    (document.head || document.documentElement).appendChild(style);
+    var box = document.createElement('div');
+    box.id = 'timetrack-box';
+    var title = document.createElement('div');
+    title.textContent = 'Время · tab ' + state.tabId;
+    var line = document.createElement('div');
+    line.id = 'timetrack-line';
+    var copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.textContent = 'Скопировать журнал';
+    copyBtn.addEventListener('click', function () { safe(copyReport, 'copy'); });
+    box.appendChild(title);
+    box.appendChild(line);
+    box.appendChild(copyBtn);
+    (document.body || document.documentElement).appendChild(box);
+  }
+
+  function init() {
+    safe(mountPanel, 'mountPanel');
+    ['keydown', 'pointerdown', 'mousemove', 'wheel', 'scroll'].forEach(function (name) {
+      window.addEventListener(name, function () { safe(markInput, name); }, true);
+    });
+    document.addEventListener('visibilitychange', function () {
+      safe(function () {
+        if (document.visibilityState === 'hidden') onHidden();
+        else onVisible();
+      }, 'visibility');
+    });
+    window.addEventListener('blur', function () { safe(onBlur, 'blur'); });
+    window.addEventListener('focus', function () { safe(onFocus, 'focus'); });
+    document.addEventListener('click', function (ev) { safe(function () { onCloseClick(ev); }, 'close click'); }, true);
+    document.addEventListener('change', function (ev) { safe(function () { onCloseChange(ev); }, 'close change'); }, true);
+    window.addEventListener('pagehide', function () { safe(onPageHide, 'pagehide'); });
+
+    state.idleTimer = setInterval(function () { safe(checkIdle, 'idle'); }, 1000);
+    state.pollTimer = setInterval(function () { safe(onCasePoll, 'poll'); }, POLL_MS);
+
+    voidTabCloseIfReturned();
+    flushQueuedClose();
+    openFromStorage();
+    saveLastCase();
+    renderPanel();
+  }
+
+  window.__timetrack = {
+    active: true,
+    state: state,
+    report: report,
+    copy: copyReport
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function () { safe(init, 'init'); });
+  } else {
+    safe(init, 'init');
+  }
+})();
