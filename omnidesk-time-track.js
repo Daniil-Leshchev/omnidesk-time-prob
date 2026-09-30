@@ -35,6 +35,7 @@
   var LAST_KEY = 'timetrack.lastCase';
   var CLOSE_KEY = 'timetrack.pendingClose';
   var TAB_CLOSE_KEY = 'timetrack.pendingTabClose';
+  var LAST_CLOSE_KEY = 'timetrack.lastClose';
 
   function pad2(n) { return (n < 10 ? '0' : '') + n; }
 
@@ -195,7 +196,19 @@
   function remember(row) {
     state.events.push(row);
     while (state.events.length > LOG_LIMIT) state.events.shift();
-    try { console.log('[timetrack]', row.ts, row.event, row); } catch (e) { }
+    try {
+      console.log('[timetrack] ' + row.ts + ' ' + row.event
+        + ' case_id=' + row.case_id
+        + ' case_number=' + row.case_number
+        + ' staff_id=' + row.staff_id
+        + ' tab_id=' + row.tab_id
+        + ' reason=' + (row.reason || '')
+        + ' priority=' + (row.priority || '')
+        + ' group=' + (row.group || '')
+        + ' visibility=' + row.visibility
+        + ' focused=' + row.focused
+        + (row.control && row.control.text ? ' control=' + row.control.text : ''));
+    } catch (e) { }
     safe(renderPanel, 'renderPanel');
   }
 
@@ -445,6 +458,7 @@
       control: control
     });
     writeStore(CLOSE_KEY, mark);
+    writeStore(LAST_CLOSE_KEY, mark);
     state.caseClosedId = info.id;
     setTimeout(function () {
       safe(function () {
@@ -460,12 +474,22 @@
   function flushQueuedClose() {
     var pending = readStore(CLOSE_KEY);
     if (!pending) return;
-    var now = getCaseInfo();
-    if (now.id && pending.case_id === now.id) return;
     writeStore(CLOSE_KEY, null);
     state.closedByButton = pending.case_id;
-    pending.reason = pending.reason || 'carried';
+    var now = getCaseInfo();
+    if (!now.id || pending.case_id !== now.id) pending.reason = pending.reason || 'carried';
     dispatch(pending);
+  }
+
+  function replayLastClose() {
+    var mark = readStore(LAST_CLOSE_KEY);
+    if (!mark || !mark.mark_id) return;
+    writeStore(LAST_CLOSE_KEY, null);
+    var i;
+    for (i = 0; i < state.events.length; i++) {
+      if (state.events[i].mark_id === mark.mark_id) return;
+    }
+    remember(mark);
   }
 
   function closeControl(node, text) {
@@ -630,6 +654,7 @@
 
     voidTabCloseIfReturned();
     flushQueuedClose();
+    replayLastClose();
     openFromStorage();
     saveLastCase();
     renderPanel();
