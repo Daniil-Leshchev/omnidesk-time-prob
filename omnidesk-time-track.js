@@ -524,6 +524,22 @@
     return null;
   }
 
+  function selectedCaseStatus() {
+    if (state.chosenStatus === 'waiting' || state.chosenStatus === 'closed') return state.chosenStatus;
+    var selects = document.querySelectorAll('select');
+    var i, j;
+    for (i = 0; i < selects.length; i++) {
+      var hasStatus = false;
+      for (j = 0; j < selects[i].options.length; j++) {
+        if (statusKind(selects[i].options[j].textContent || '')) hasStatus = true;
+      }
+      if (!hasStatus || selects[i].selectedIndex < 0) continue;
+      var kind = statusKind(selects[i].options[selects[i].selectedIndex].textContent || '');
+      if (kind === 'waiting' || kind === 'closed') return kind;
+    }
+    return selectedStatusOnPage();
+  }
+
   function onCloseClick(ev) {
     var n = ev.target;
     var i;
@@ -559,7 +575,7 @@
         return;
       }
       if (/^сохранить\b/i.test(text)) {
-        var chosen = selectedStatusOnPage();
+        var chosen = selectedCaseStatus();
         if (chosen === 'waiting' || chosen === 'closed') {
           queueCaseClose(chosen, closeControl(n, chosen === 'waiting' ? 'в ожидании' : 'закрытое'));
         }
@@ -655,7 +671,7 @@
     var box = document.createElement('div');
     box.id = 'timetrack-box';
     var title = document.createElement('div');
-    title.textContent = 'Время · close-2 · tab ' + state.tabId;
+    title.textContent = 'Время · close-3 · tab ' + state.tabId;
     var line = document.createElement('div');
     line.id = 'timetrack-line';
     var copyBtn = document.createElement('button');
@@ -682,6 +698,14 @@
     window.addEventListener('blur', function () { safe(onBlur, 'blur'); });
     window.addEventListener('focus', function () { safe(onFocus, 'focus'); });
     document.addEventListener('click', function (ev) { safe(function () { onCloseClick(ev); }, 'close click'); }, true);
+    document.addEventListener('submit', function () {
+      safe(function () {
+        var chosen = selectedCaseStatus();
+        if (chosen === 'waiting' || chosen === 'closed') {
+          queueCaseClose(chosen, { tag: 'form', id: '', text: chosen === 'waiting' ? 'в ожидании' : 'закрытое' });
+        }
+      }, 'close submit');
+    }, true);
     document.addEventListener('change', function (ev) { safe(function () { onCloseChange(ev); }, 'close change'); }, true);
     window.addEventListener('pagehide', function () { safe(onPageHide, 'pagehide'); });
 
