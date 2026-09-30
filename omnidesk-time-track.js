@@ -457,18 +457,11 @@
       mark_id: rid(),
       control: control
     });
+    mark.dispatched = true;
     writeStore(CLOSE_KEY, mark);
     writeStore(LAST_CLOSE_KEY, mark);
     state.caseClosedId = info.id;
-    setTimeout(function () {
-      safe(function () {
-        var pending = readStore(CLOSE_KEY);
-        var now = getCaseInfo();
-        if (!pending || !now.id || pending.case_id !== now.id) return;
-        writeStore(CLOSE_KEY, null);
-        dispatch(pending);
-      }, 'close stay');
-    }, 400);
+    dispatch(mark);
   }
 
   function flushQueuedClose() {
@@ -476,6 +469,7 @@
     if (!pending) return;
     writeStore(CLOSE_KEY, null);
     state.closedByButton = pending.case_id;
+    if (pending.dispatched) return;
     var now = getCaseInfo();
     if (!now.id || pending.case_id !== now.id) pending.reason = pending.reason || 'carried';
     dispatch(pending);
@@ -500,37 +494,79 @@
     };
   }
 
-  function onCloseClick(ev) {
-    var node = clickControl(ev.target);
-    if (!node) return;
-    var text = uiLabel(node);
-    var kind = statusKind(text);
-    var dialog = statusDialog();
+  function shortLabel(node) {
+    if (!node || node.nodeType !== 1) return '';
+    var direct = '';
+    var i;
+    if (node.childNodes) {
+      for (i = 0; i < node.childNodes.length; i++) {
+        if (node.childNodes[i].nodeType === 3) direct += node.childNodes[i].textContent;
+      }
+    }
+    direct = direct.replace(/\s+/g, ' ').trim();
+    if (!direct) direct = String(node.value || '').replace(/\s+/g, ' ').trim();
+    if (!direct && node.childNodes && node.childNodes.length === 1) {
+      direct = String(node.innerText || '').replace(/\s+/g, ' ').trim();
+    }
+    if (direct.length > 48) return '';
+    return direct;
+  }
 
-    if (isFinishChat(text)) {
-      state.chosenStatus = null;
-      return;
+  function selectedStatusOnPage() {
+    if (state.chosenStatus === 'waiting' || state.chosenStatus === 'closed') return state.chosenStatus;
+    var nodes = document.querySelectorAll('button, a, span, label, div, input');
+    var i;
+    for (i = 0; i < nodes.length && i < 2500; i++) {
+      var kind = statusKind(shortLabel(nodes[i]));
+      if (kind !== 'waiting' && kind !== 'closed') continue;
+      if (buttonLooksOn(nodes[i])) return kind;
     }
-    if (isCancel(text)) {
-      state.chosenStatus = null;
-      return;
+    return null;
+  }
+
+  function onCloseClick(ev) {
+    var n = ev.target;
+    var i;
+    for (i = 0; n && n.nodeType === 1 && i < 8; i++) {
+      if (n.id === 'timetrack-box') return;
+      try { if (n.closest && n.closest('#timetrack-box')) return; } catch (e) { /* ничего */ }
+      var text = shortLabel(n);
+      var kind = statusKind(text);
+      var dialog = statusDialog();
+      if (isFinishChat(text)) {
+        state.chosenStatus = null;
+        return;
+      }
+      if (isCancel(text)) {
+        state.chosenStatus = null;
+        return;
+      }
+      if (kind === 'open') {
+        state.chosenStatus = 'open';
+        return;
+      }
+      if (kind === 'waiting' || kind === 'closed') {
+        state.chosenStatus = kind;
+        if (!dialog) queueCaseClose(kind, closeControl(n, text));
+        return;
+      }
+      if (isConfirmFinish(text) && dialog) {
+        var picked = chosenInDialog(dialog);
+        var label = picked === 'waiting' ? 'в ожидании' : picked === 'closed' ? 'закрытое' : text;
+        state.chosenStatus = null;
+        if (picked === 'open') return;
+        queueCaseClose(picked || 'status', closeControl(n, label));
+        return;
+      }
+      if (/^сохранить\b/i.test(text)) {
+        var chosen = selectedStatusOnPage();
+        if (chosen === 'waiting' || chosen === 'closed') {
+          queueCaseClose(chosen, closeControl(n, chosen === 'waiting' ? 'в ожидании' : 'закрытое'));
+        }
+        return;
+      }
+      n = n.parentElement;
     }
-    if (kind && dialog) {
-      state.chosenStatus = kind;
-      return;
-    }
-    if (isConfirmFinish(text) && dialog) {
-      var picked = chosenInDialog(dialog);
-      var label = picked === 'waiting' ? 'в ожидании' : picked === 'closed' ? 'закрытое' : text;
-      state.chosenStatus = null;
-      if (picked === 'open') return;
-      queueCaseClose(picked || 'status', closeControl(node, label));
-      return;
-    }
-    if (dialog) return;
-    var blob = [node.id || '', node.name || '', typeof node.className === 'string' ? node.className : '', text].join(' ');
-    if (kind === 'open' || !looksLikeClose(blob)) return;
-    queueCaseClose(kind === 'waiting' ? 'waiting' : 'ui', closeControl(node, text));
   }
 
   function onCloseChange(ev) {
@@ -619,7 +655,7 @@
     var box = document.createElement('div');
     box.id = 'timetrack-box';
     var title = document.createElement('div');
-    title.textContent = 'Время · tab ' + state.tabId;
+    title.textContent = 'Время · close-2 · tab ' + state.tabId;
     var line = document.createElement('div');
     line.id = 'timetrack-line';
     var copyBtn = document.createElement('button');
