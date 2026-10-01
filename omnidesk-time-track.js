@@ -1,24 +1,3 @@
-/*
- * Наружу уходят только именованные события. Сырые focus / blur / visible
- * остаются внутри и в имена не превращаются по одному:
- *   hidden              → omnidesk_case_tab_leave / omnidesk_case_tab_return
- *                         (смена вкладки и сворачивание окна — одно и то же)
- *   blur при видимой
- *   вкладке             → omnidesk_case_app_leave / omnidesk_case_app_return
- *   нет ввода           → omnidesk_case_idle / omnidesk_case_active
- *   открытие            → omnidesk_case_open
- *   завершить чат      → модалка статуса. «в ожидании» и «закрытое»
- *                         плюс кнопка «Завершить» → omnidesk_case_close.
- *                         «открытое» и «Отменить» работу не заканчивают.
- *                         Без модалки клик «закрыть» по-прежнему сразу закрывает.
- *   крестик вкладки     → omnidesk_case_tab_close
- *
- * В каждом событии число staff_id, case_id, case_number, tab_id, event_ts.
- * Если на странице есть select#priority-select и select#case_group_id, в событие
- * попадают только подписи выбранных пунктов. Адрес, получатель и имя сотрудника не читаются.
- * Категория и тема — только у поля с такой подписью. На тестовой странице их нет.
- *
- */
 (function () {
   'use strict';
 
@@ -524,7 +503,26 @@
     return null;
   }
 
+  function anchorStatus(node) {
+    if (!node || !node.closest) return null;
+    var a = node.closest('a.req-status-closed, a.req-status-waiting, a.req-status-wait, a.req-status-open, .req-status-action a.tab-title');
+    if (!a) return null;
+    var cls = typeof a.className === 'string' ? a.className : '';
+    var text = String(a.textContent || '').replace(/\s+/g, ' ').trim();
+    if (/req-status-closed/.test(cls) || /закрыт/i.test(text)) return 'closed';
+    if (/req-status-wait/.test(cls) || /ожидани/i.test(text)) return 'waiting';
+    if (/req-status-open/.test(cls) || /открыт/i.test(text)) return 'open';
+    return null;
+  }
+
+  function activeBarStatus() {
+    var a = document.querySelector('.req-status-action a.tab-title.active-item, .req-status-action a.tab-title.manual-active');
+    return anchorStatus(a);
+  }
+
   function selectedCaseStatus() {
+    var fromBar = activeBarStatus();
+    if (fromBar === 'waiting' || fromBar === 'closed') return fromBar;
     if (state.chosenStatus === 'waiting' || state.chosenStatus === 'closed') return state.chosenStatus;
     var selects = document.querySelectorAll('select');
     var i, j;
@@ -541,6 +539,30 @@
   }
 
   function onCloseClick(ev) {
+    var fromAnchor = anchorStatus(ev.target);
+    if (fromAnchor === 'open') {
+      state.chosenStatus = 'open';
+      return;
+    }
+    if (fromAnchor === 'waiting' || fromAnchor === 'closed') {
+      state.chosenStatus = fromAnchor;
+      if (!statusDialog()) {
+        queueCaseClose(fromAnchor, {
+          tag: 'a',
+          id: 'req-status-' + fromAnchor,
+          text: fromAnchor === 'waiting' ? 'в ожидании' : 'закрытое'
+        });
+      }
+      return;
+    }
+    var save = ev.target.closest && ev.target.closest('.req-form-action input, .req-form-action button, .req-form-action label');
+    if (save) {
+      var chosen = selectedCaseStatus();
+      if (chosen === 'waiting' || chosen === 'closed') {
+        queueCaseClose(chosen, { tag: 'input', id: 'req-form-action', text: chosen === 'waiting' ? 'в ожидании' : 'закрытое' });
+      }
+      return;
+    }
     var n = ev.target;
     var i;
     for (i = 0; n && n.nodeType === 1 && i < 8; i++) {
@@ -671,7 +693,7 @@
     var box = document.createElement('div');
     box.id = 'timetrack-box';
     var title = document.createElement('div');
-    title.textContent = 'Время · close-3 · tab ' + state.tabId;
+    title.textContent = 'Время · close-4 · tab ' + state.tabId;
     var line = document.createElement('div');
     line.id = 'timetrack-line';
     var copyBtn = document.createElement('button');
