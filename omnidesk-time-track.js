@@ -175,19 +175,7 @@
   function remember(row) {
     state.events.push(row);
     while (state.events.length > LOG_LIMIT) state.events.shift();
-    try {
-      console.log('[timetrack] ' + row.ts + ' ' + row.event
-        + ' case_id=' + row.case_id
-        + ' case_number=' + row.case_number
-        + ' staff_id=' + row.staff_id
-        + ' tab_id=' + row.tab_id
-        + ' reason=' + (row.reason || '')
-        + ' priority=' + (row.priority || '')
-        + ' group=' + (row.group || '')
-        + ' visibility=' + row.visibility
-        + ' focused=' + row.focused
-        + (row.control && row.control.text ? ' control=' + row.control.text : ''));
-    } catch (e) { }
+    try { console.log('[timetrack]', row.ts, row.event, row); } catch (e) { }
     safe(renderPanel, 'renderPanel');
   }
 
