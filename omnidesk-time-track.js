@@ -6,7 +6,7 @@
     return;
   }
 
-  var SEND_URL = '';
+  var SEND_URL = 'https://umschool.net/_jts/api/s/track';
   var IDLE_MS = 2 * 60 * 1000;
   var POLL_MS = 1000;
   var LOG_LIMIT = 200;
@@ -126,24 +126,17 @@
     return String(raw || '').replace(/\s+/g, ' ').trim();
   }
 
-  /* Приоритет на тестовой странице — select#priority-select, список скрыт, выбранный option на месте.
-     Категорию и тему читаем только если подпись поля так и называется. Адрес, получателя и имя не берём. */
+  /* Тему диалога берём только у поля с точной подписью «Тема диалога». */
   function readMarkup() {
-    var priority = selectedText(document.querySelector('#priority-select, select[name="case_priority"]'));
-    var group = selectedText(document.querySelector('#case_group_id'));
-    var category = null;
     var topic = null;
     var labels = document.querySelectorAll('label.rlt.select-lbl');
     var i;
     for (i = 0; i < labels.length; i++) {
-      var title = labelTitle(labels[i]);
-      var value = selectedText(labels[i].querySelector('select'));
-      if (!priority && /^Приоритет\b/.test(title)) priority = value;
-      if (!group && /^Группа\b/.test(title)) group = value;
-      if (/^Категория\b/.test(title)) category = value;
-      if (/^Тема\b/.test(title)) topic = value;
+      if (labelTitle(labels[i]) === 'Тема диалога') {
+        topic = selectedText(labels[i].querySelector('select'));
+      }
     }
-    return { priority: priority, group: group, category: category, topic: topic };
+    return { topic: topic };
   }
 
   function payload(eventName, extra) {
@@ -161,9 +154,7 @@
       visibility: f.visibility,
       focused: f.focused,
       activity: f.activity,
-      priority: markup.priority,
-      group: markup.group,
-      category: markup.category,
+      omnidesk_host: location.hostname,
       topic: markup.topic
     };
     if (extra) {
@@ -179,9 +170,38 @@
     safe(renderPanel, 'renderPanel');
   }
 
+  function jitsuBody(row) {
+    var data = {
+      event_ts: row.event_ts,
+      case_id: row.case_id,
+      case_number: row.case_number,
+      staff_id: row.staff_id,
+      tab_id: row.tab_id,
+      visibility: row.visibility,
+      focused: row.focused,
+      activity: row.activity,
+      omnidesk_host: row.omnidesk_host || null,
+      reason: row.reason || null,
+      previous_case_id: row.previous_case_id || null,
+      next_case_id: row.next_case_id || null,
+      mark_id: row.mark_id || null,
+      void_mark_id: row.void_mark_id || null,
+      topic: row.topic || null
+    };
+    return {
+      type: 'track',
+      event: row.event,
+      timestamp: row.event_ts,
+      sentAt: new Date().toISOString(),
+      properties: data,
+      event_data: data
+    };
+  }
+
   function dispatch(row) {
     remember(row);
-    if (!SEND_URL || typeof fetch !== 'function') return;
+    if (!SEND_URL || typeof fetch !== 'function' || row.dispatched) return;
+    row.dispatched = true;
     try {
       fetch(SEND_URL, {
         method: 'POST',
@@ -190,7 +210,7 @@
         credentials: 'omit',
         keepalive: true,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(row)
+        body: JSON.stringify(jitsuBody(row))
       }).catch(function () { /* сеть не должна ломать страницу */ });
     } catch (e) { }
   }
@@ -424,11 +444,10 @@
       mark_id: rid(),
       control: control
     });
-    mark.dispatched = true;
-    writeStore(CLOSE_KEY, mark);
-    writeStore(LAST_CLOSE_KEY, mark);
     state.caseClosedId = info.id;
     dispatch(mark);
+    writeStore(CLOSE_KEY, mark);
+    writeStore(LAST_CLOSE_KEY, mark);
   }
 
   function flushQueuedClose() {
@@ -668,7 +687,7 @@
     var last = state.events[state.events.length - 1];
     line.textContent = state.events.length + ' событий'
       + (last ? ' · ' + last.ts + ' ' + last.event : '')
-      + (SEND_URL ? '' : ' · без отправки');
+      + (SEND_URL ? ' · Jitsu' : ' · без отправки');
   }
 
   function mountPanel() {
@@ -681,7 +700,7 @@
     var box = document.createElement('div');
     box.id = 'timetrack-box';
     var title = document.createElement('div');
-    title.textContent = 'Время · close-4 · tab ' + state.tabId;
+    title.textContent = 'Время · jitsu-5 · tab ' + state.tabId;
     var line = document.createElement('div');
     line.id = 'timetrack-line';
     var copyBtn = document.createElement('button');
