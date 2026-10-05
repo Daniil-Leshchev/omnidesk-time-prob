@@ -167,7 +167,6 @@
     state.events.push(row);
     while (state.events.length > LOG_LIMIT) state.events.shift();
     try { console.log('[timetrack]', row.ts, row.event, row); } catch (e) { }
-    safe(renderPanel, 'renderPanel');
   }
 
   function jitsuBody(row) {
@@ -681,40 +680,7 @@
     return text;
   }
 
-  function renderPanel() {
-    var line = document.getElementById('timetrack-line');
-    if (!line) return;
-    var last = state.events[state.events.length - 1];
-    line.textContent = state.events.length + ' событий'
-      + (last ? ' · ' + last.ts + ' ' + last.event : '')
-      + (SEND_URL ? ' · Jitsu' : ' · без отправки');
-  }
-
-  function mountPanel() {
-    if (document.getElementById('timetrack-box')) return;
-    var css = '#timetrack-box{position:fixed;right:16px;top:120px;z-index:2147483000;background:#fff;color:#222;border:1px solid #ccc;border-radius:6px;padding:8px 10px;font:12px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;width:280px}#timetrack-box button{font:inherit;margin-top:6px}';
-    var style = document.createElement('style');
-    style.id = 'timetrack-style';
-    style.appendChild(document.createTextNode(css));
-    (document.head || document.documentElement).appendChild(style);
-    var box = document.createElement('div');
-    box.id = 'timetrack-box';
-    var title = document.createElement('div');
-    title.textContent = 'Время · jitsu-5 · tab ' + state.tabId;
-    var line = document.createElement('div');
-    line.id = 'timetrack-line';
-    var copyBtn = document.createElement('button');
-    copyBtn.type = 'button';
-    copyBtn.textContent = 'Скопировать журнал';
-    copyBtn.addEventListener('click', function () { safe(copyReport, 'copy'); });
-    box.appendChild(title);
-    box.appendChild(line);
-    box.appendChild(copyBtn);
-    (document.body || document.documentElement).appendChild(box);
-  }
-
   function init() {
-    safe(mountPanel, 'mountPanel');
     ['keydown', 'pointerdown', 'mousemove', 'wheel', 'scroll'].forEach(function (name) {
       window.addEventListener(name, function () { safe(markInput, name); }, true);
     });
@@ -746,7 +712,6 @@
     replayLastClose();
     openFromStorage();
     saveLastCase();
-    renderPanel();
   }
 
   window.__timetrack = {
