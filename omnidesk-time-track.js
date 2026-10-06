@@ -192,7 +192,7 @@
       event: row.event,
       timestamp: row.event_ts,
       sentAt: new Date().toISOString(),
-      properties: { event_data: data }
+      properties: { event_type: 'event', event_data: JSON.stringify(data) }
     };
   }
 
