@@ -6,9 +6,11 @@
     return;
   }
 
-  var SEND_URL = 'https://umschool.net/_jts/api/s/track';
+  var SEND_URL = '';
   var IDLE_MS = 2 * 60 * 1000;
+  var LEAVE_DELAY_MS = 200;
   var POLL_MS = 1000;
+  var DIALOG_HEADING = 'Выберите статус, который получит обращение по чату';
   var LOG_LIMIT = 200;
   var CASE_URL_RE = /\/cases\/record\/(\d+-\d+)/;
   var LAST_KEY = 'timetrack.lastCase';
@@ -102,7 +104,9 @@
     tabCloseQueued: false,
     caseClosedId: null,
     closedByButton: null,
-    chosenStatus: null
+    chosenStatus: null,
+    appLeaveTimer: null,
+    tabLeaveTimer: null
   };
 
   function flags() {
@@ -126,7 +130,7 @@
     return String(raw || '').replace(/\s+/g, ' ').trim();
   }
 
-  /* Тему диалога берём только у поля с точной подписью «Тема диалога». */
+  /* тему диалога берем по точной подписи "тема диалога" */
   function readMarkup() {
     var topic = null;
     var labels = document.querySelectorAll('label.rlt.select-lbl');
@@ -167,6 +171,7 @@
     state.events.push(row);
     while (state.events.length > LOG_LIMIT) state.events.shift();
     try { console.log('[timetrack]', row.ts, row.event, row); } catch (e) { }
+    safe(renderPanel, 'renderPanel');
   }
 
   function jitsuBody(row) {
@@ -223,9 +228,15 @@
     writeStore(LAST_KEY, {
       tab_id: state.tabId,
       case_id: info.id,
-      case_number: info.number
+      case_number: info.number,
+      topic: readMarkup().topic || null
     });
     state.lastCaseId = info.id;
+  }
+
+  function savedTopic(saved, caseId) {
+    if (!saved || saved.case_id !== caseId) return null;
+    return saved.topic || null;
   }
 
   function sameTab(saved) {
@@ -248,7 +259,8 @@
           reason: 'switch',
           case_id: saved.case_id,
           case_number: saved.case_number,
-          next_case_id: info.id
+          next_case_id: info.id,
+          topic: savedTopic(saved, saved.case_id)
         });
       }
       track('omnidesk_case_open', { reason: 'switch', previous_case_id: saved.case_id });
@@ -262,14 +274,18 @@
     var info = getCaseInfo();
     var next = info.id;
     var prev = state.lastCaseId;
-    if (String(next) === String(prev)) return;
+    if (String(next) === String(prev)) {
+      if (next) saveLastCase(info);
+      return;
+    }
     if (prev) {
       var saved = readStore(LAST_KEY);
       track('omnidesk_case_close', {
         reason: 'switch',
         case_id: prev,
         case_number: saved && saved.case_id === prev ? saved.case_number : null,
-        next_case_id: next
+        next_case_id: next,
+        topic: savedTopic(saved, prev)
       });
     }
     state.lastCaseId = next;
@@ -280,13 +296,57 @@
     }
   }
 
+  function cancelTimer(name) {
+    if (!state[name]) return;
+    clearTimeout(state[name]);
+    state[name] = null;
+  }
+
+  function focusInIframe() {
+    var active = null;
+    try { active = document.activeElement; } catch (e) { return false; }
+    return !!(active && active.tagName && String(active.tagName).toLowerCase() === 'iframe');
+  }
+
+  /* blur при сворачивании приходит раньше hidden. Ждём, чтобы не записать оба ухода. */
+  function scheduleAppLeave() {
+    cancelTimer('appLeaveTimer');
+    state.appLeaveTimer = setTimeout(function () {
+      state.appLeaveTimer = null;
+      safe(function () {
+        var visibility = 'unknown';
+        try { visibility = document.visibilityState; } catch (e) { }
+        if (visibility !== 'visible' || state.away === 'tab' || state.away === 'app') return;
+        if (focusInIframe()) return;
+        state.away = 'app';
+        track('omnidesk_case_app_leave');
+      }, 'app leave');
+    }, LEAVE_DELAY_MS);
+  }
+
+  /* Короткий hidden при перезагрузке отменяется в pagehide и не становится уходом. */
+  function scheduleTabLeave() {
+    cancelTimer('tabLeaveTimer');
+    state.tabLeaveTimer = setTimeout(function () {
+      state.tabLeaveTimer = null;
+      safe(function () {
+        var visibility = 'unknown';
+        try { visibility = document.visibilityState; } catch (e) { }
+        if (visibility !== 'hidden' || state.away === 'tab') return;
+        state.away = 'tab';
+        track('omnidesk_case_tab_leave');
+      }, 'tab leave');
+    }, LEAVE_DELAY_MS);
+  }
+
   function onHidden() {
-    if (state.away === 'tab') return;
-    state.away = 'tab';
-    track('omnidesk_case_tab_leave');
+    cancelTimer('appLeaveTimer');
+    if (state.away === 'tab' || state.away === 'app') return;
+    scheduleTabLeave();
   }
 
   function onVisible() {
+    cancelTimer('tabLeaveTimer');
     if (state.away !== 'tab') return;
     state.away = null;
     track('omnidesk_case_tab_return');
@@ -296,11 +356,11 @@
     var visibility = 'unknown';
     try { visibility = document.visibilityState; } catch (e) { }
     if (visibility !== 'visible' || state.away === 'tab' || state.away === 'app') return;
-    state.away = 'app';
-    track('omnidesk_case_app_leave');
+    scheduleAppLeave();
   }
 
   function onFocus() {
+    cancelTimer('appLeaveTimer');
     if (state.away !== 'app') return;
     var visibility = 'unknown';
     try { visibility = document.visibilityState; } catch (e) { }
@@ -323,10 +383,6 @@
       state.activity = 'idle';
       track('omnidesk_case_idle');
     }
-  }
-
-  function looksLikeClose(text) {
-    return /закры|close|resolve|заверш/i.test(text || '');
   }
 
   function isFinishChat(text) {
@@ -352,12 +408,13 @@
   function statusDialog() {
     var nodes = document.querySelectorAll('div, section, form, [role="dialog"]');
     var best = null;
-    var bestLen = 2000;
+    var bestLen = 1e9;
     var i;
+    var t;
     for (i = 0; i < nodes.length && i < 3000; i++) {
-      var t = nodes[i].innerText || '';
-      if (t.length < 40 || t.length > 1200) continue;
-      if (t.indexOf('Выберите статус') < 0) continue;
+      t = nodes[i].textContent || '';
+      if (t.indexOf(DIALOG_HEADING) < 0) continue;
+      if (t.indexOf('Завершить') < 0) continue;
       if (t.length < bestLen) {
         best = nodes[i];
         bestLen = t.length;
@@ -544,14 +601,18 @@
   }
 
   function onCloseClick(ev) {
-    var fromAnchor = anchorStatus(ev.target);
+    var start = ev.target;
+    if (start && start.nodeType !== 1) start = start.parentElement;
+    if (!clickMightClose(start)) return;
+    var dialog = statusDialog();
+    var fromAnchor = anchorStatus(start);
     if (fromAnchor === 'open') {
       state.chosenStatus = 'open';
       return;
     }
     if (fromAnchor === 'waiting' || fromAnchor === 'closed') {
       state.chosenStatus = fromAnchor;
-      if (!statusDialog()) {
+      if (!dialog) {
         queueCaseClose(fromAnchor, {
           tag: 'a',
           id: 'req-status-' + fromAnchor,
@@ -560,7 +621,7 @@
       }
       return;
     }
-    var save = ev.target.closest && ev.target.closest('.req-form-action input, .req-form-action button, .req-form-action label');
+    var save = start && start.closest && start.closest('.req-form-action input, .req-form-action button, .req-form-action label');
     if (save) {
       var chosen = selectedCaseStatus();
       if (chosen === 'waiting' || chosen === 'closed') {
@@ -568,14 +629,13 @@
       }
       return;
     }
-    var n = ev.target;
+    var n = start;
     var i;
     for (i = 0; n && n.nodeType === 1 && i < 8; i++) {
       if (n.id === 'timetrack-box') return;
       try { if (n.closest && n.closest('#timetrack-box')) return; } catch (e) { /* ничего */ }
       var text = shortLabel(n);
       var kind = statusKind(text);
-      var dialog = statusDialog();
       if (isFinishChat(text)) {
         state.chosenStatus = null;
         return;
@@ -595,21 +655,39 @@
       }
       if (isConfirmFinish(text) && dialog) {
         var picked = chosenInDialog(dialog);
-        var label = picked === 'waiting' ? 'в ожидании' : picked === 'closed' ? 'закрытое' : text;
+        if (picked !== 'waiting' && picked !== 'closed') return;
+        var label = picked === 'waiting' ? 'в ожидании' : 'закрытое';
         state.chosenStatus = null;
-        if (picked === 'open') return;
-        queueCaseClose(picked || 'status', closeControl(n, label));
+        queueCaseClose(picked, closeControl(n, label));
         return;
       }
       if (/^сохранить\b/i.test(text)) {
-        var chosen = selectedCaseStatus();
-        if (chosen === 'waiting' || chosen === 'closed') {
-          queueCaseClose(chosen, closeControl(n, chosen === 'waiting' ? 'в ожидании' : 'закрытое'));
+        var chosenSave = selectedCaseStatus();
+        if (chosenSave === 'waiting' || chosenSave === 'closed') {
+          queueCaseClose(chosenSave, closeControl(n, chosenSave === 'waiting' ? 'в ожидании' : 'закрытое'));
         }
         return;
       }
       n = n.parentElement;
     }
+  }
+
+  function clickMightClose(node) {
+    var n = node;
+    var i;
+    if (!n) return false;
+    if (n.nodeType !== 1) n = n.parentElement;
+    if (!n) return false;
+    if (anchorStatus(n)) return true;
+    try {
+      if (n.closest && n.closest('.req-form-action')) return true;
+    } catch (e) { }
+    for (i = 0; n && n.nodeType === 1 && i < 8; i++) {
+      var text = shortLabel(n);
+      if (statusKind(text) || isFinishChat(text) || isConfirmFinish(text) || isCancel(text) || /^сохранить\b/i.test(text)) return true;
+      n = n.parentElement;
+    }
+    return false;
   }
 
   function onCloseChange(ev) {
@@ -622,15 +700,14 @@
       }
     } catch (e) { return; }
     var kind = statusKind(text);
-    if (kind === 'open') return;
-    var blob = [node.id || '', node.name || '', text].join(' ');
-    if (kind !== 'waiting' && kind !== 'closed' && !looksLikeClose(blob)) return;
-    queueCaseClose(kind || 'status', { tag: 'select', id: node.id || '', text: text });
+    if (kind === 'open' || kind === 'waiting' || kind === 'closed') state.chosenStatus = kind;
   }
 
   /* pagehide бывает и при переходе, и при крестике.
      Событие уходит сразу. Следующая загрузка той же вкладки его отменяет. */
   function onPageHide() {
+    cancelTimer('tabLeaveTimer');
+    cancelTimer('appLeaveTimer');
     saveLastCase();
     if (state.tabCloseQueued) return;
     var info = getCaseInfo();
@@ -679,7 +756,40 @@
     return text;
   }
 
+  function renderPanel() {
+    var line = document.getElementById('timetrack-line');
+    if (!line) return;
+    var last = state.events[state.events.length - 1];
+    line.textContent = state.events.length + ' событий'
+      + (last ? ' · ' + last.ts + ' ' + last.event : '')
+      + (SEND_URL ? '' : ' · без отправки');
+  }
+
+  function mountPanel() {
+    if (document.getElementById('timetrack-box')) return;
+    var css = '#timetrack-box{position:fixed;right:16px;top:120px;z-index:2147483000;background:#fff;color:#222;border:1px solid #ccc;border-radius:6px;padding:8px 10px;font:12px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;width:280px}#timetrack-box button{font:inherit;margin-top:6px}';
+    var style = document.createElement('style');
+    style.id = 'timetrack-style';
+    style.appendChild(document.createTextNode(css));
+    (document.head || document.documentElement).appendChild(style);
+    var box = document.createElement('div');
+    box.id = 'timetrack-box';
+    var title = document.createElement('div');
+    title.textContent = 'Время · fixes-1 · tab ' + state.tabId;
+    var line = document.createElement('div');
+    line.id = 'timetrack-line';
+    var copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.textContent = 'Скопировать журнал';
+    copyBtn.addEventListener('click', function () { safe(copyReport, 'copy'); });
+    box.appendChild(title);
+    box.appendChild(line);
+    box.appendChild(copyBtn);
+    (document.body || document.documentElement).appendChild(box);
+  }
+
   function init() {
+    safe(mountPanel, 'mountPanel');
     ['keydown', 'pointerdown', 'mousemove', 'wheel', 'scroll'].forEach(function (name) {
       window.addEventListener(name, function () { safe(markInput, name); }, true);
     });
@@ -711,6 +821,7 @@
     replayLastClose();
     openFromStorage();
     saveLastCase();
+    renderPanel();
   }
 
   window.__timetrack = {
